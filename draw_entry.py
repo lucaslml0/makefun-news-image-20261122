@@ -1,181 +1,207 @@
 #!/usr/bin/env python3
-"""Draw a one-page newspaper front page summing up the world news of
-Sunday 22 November 2026. Output: entry.png, 1024x1024, PNG.
+"""Draw the 22 November 2026 newspaper front page (1024x1024 PNG).
 
-Everything on the page is drawn with PIL primitives and DejaVu fonts;
-no external images, no network access. The output is deterministic:
-running this script twice produces byte-identical PNGs.
+Fresh implementation: a one-page broadsheet with a masthead, a lead
+story, two half-width stories and a three-column row, drawn entirely
+with Pillow. No network access; output is deterministic.
 """
+
 import os
+
 from PIL import Image, ImageDraw, ImageFont
 
-W, H = 1024, 1024
-INK = (26, 26, 26)
-PAPER = (253, 246, 233)
-RED = (139, 26, 26)
-RULE = (120, 110, 95)
-MUTED = (90, 84, 72)
-TINT = (243, 234, 214)
+SIZE = 1024
+MARGIN = 34
+GUTTER = 16
+
+PAPER = (247, 241, 227)      # warm newsprint
+INK = (24, 22, 18)           # near-black
+RULE = (24, 22, 18)
+RED = (146, 32, 28)          # brick red for kickers
+GREY = (96, 90, 80)          # footer grey
+BOX_BG = (252, 248, 238)     # slightly lighter panel
 
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
+SERIF = os.path.join(FONT_DIR, "DejaVuSerif.ttf")
+SERIF_BOLD = os.path.join(FONT_DIR, "DejaVuSerif-Bold.ttf")
+SANS = os.path.join(FONT_DIR, "DejaVuSans.ttf")
+SANS_BOLD = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
 
 
-def font(name, size):
-    return ImageFont.truetype(os.path.join(FONT_DIR, name), size)
+def font(path, size):
+    return ImageFont.truetype(path, size)
 
 
-SERIF_B = "DejaVuSerif-Bold.ttf"
-SERIF = "DejaVuSerif.ttf"
-SANS_B = "DejaVuSans-Bold.ttf"
-SANS = "DejaVuSans.ttf"
-
-
-def wrap(draw, text, fnt, max_w):
-    """Split text into lines that fit max_w pixels."""
-    words = text.split()
-    lines, cur = [], ""
-    for word in words:
-        trial = (cur + " " + word).strip()
-        if draw.textlength(trial, font=fnt) <= max_w:
-            cur = trial
-        else:
-            if cur:
-                lines.append(cur)
-            cur = word
-    if cur:
-        lines.append(cur)
+def wrap(draw, text, face, max_width):
+    """Greedy word wrap returning a list of lines that fit max_width."""
+    lines = []
+    for paragraph in text.split("\n"):
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        current = words[0]
+        for word in words[1:]:
+            trial = current + " " + word
+            if draw.textlength(trial, font=face) <= max_width:
+                current = trial
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
     return lines
 
 
-def draw_story(draw, x, y, w, kicker, headline, body,
-               head_size=27, body_size=19, head_font=SERIF_B):
-    """Draw one story inside a box starting at (x, y); return bottom y."""
+def text_block(draw, x, y, lines, face, fill, leading):
+    """Draw lines top-to-bottom; return the y just below the last line."""
+    for line in lines:
+        draw.text((x, y), line, font=face, fill=fill)
+        y += leading
+    return y
+
+
+def story_card(draw, box, kicker, headline, body, head_size=30,
+               body_size=19, head_leading=36, body_leading=26):
+    """Draw one story inside box=(x, y, w, h); return bottom y used."""
+    x, y, w, h = box
+    draw.rectangle([x, y, x + w - 1, y + h - 1], fill=BOX_BG,
+                   outline=RULE, width=2)
     pad = 16
-    inner = w - 2 * pad
     cx = x + pad
-    cy = y + 10
-    kf = font(SANS_B, 18)
-    draw.text((cx, cy), kicker, font=kf, fill=RED)
-    cy += 26
-    hf = font(head_font, head_size)
-    for line in wrap(draw, headline, hf, inner):
-        draw.text((cx, cy), line, font=hf, fill=INK)
-        cy += head_size + 8
-    cy += 2
-    bf = font(SANS, body_size)
-    for line in wrap(draw, body, bf, inner):
-        draw.text((cx, cy), line, font=bf, fill=INK)
-        cy += body_size + 7
-    return cy + 8
+    inner = w - 2 * pad
+    cy = y + pad
+
+    kicker_face = font(SANS_BOLD, 15)
+    draw.text((cx, cy), kicker, font=kicker_face, fill=RED)
+    cy += 24
+    draw.line([(cx, cy), (cx + inner, cy)], fill=RED, width=2)
+    cy += 10
+
+    head_face = font(SERIF_BOLD, head_size)
+    head_lines = wrap(draw, headline, head_face, inner)
+    cy = text_block(draw, cx, cy, head_lines, head_face, INK, head_leading)
+
+    cy += 6
+    body_face = font(SERIF, body_size)
+    body_lines = wrap(draw, body, body_face, inner)
+    cy = text_block(draw, cx, cy, body_lines, body_face, INK, body_leading)
+    return cy
 
 
-def main():
-    img = Image.new("RGB", (W, H), PAPER)
+def build():
+    img = Image.new("RGB", (SIZE, SIZE), PAPER)
     draw = ImageDraw.Draw(img)
-    mx = 34                      # side margin
-    cw = W - 2 * mx              # content width
+
+    # Outer frame.
+    draw.rectangle([8, 8, SIZE - 9, SIZE - 9], outline=RULE, width=3)
+    draw.rectangle([14, 14, SIZE - 15, SIZE - 15], outline=RULE, width=1)
 
     # ---- Masthead ----
-    y = 26
+    y = MARGIN + 6
+    mast = font(SERIF_BOLD, 62)
     title = "THE WORLD IN ONE PAGE"
-    tf = font(SERIF_B, 58)
-    tw = draw.textlength(title, font=tf)
-    draw.text(((W - tw) / 2, y), title, font=tf, fill=INK)
-    y += 76
-    draw.line([(mx, y), (W - mx, y)], fill=RULE, width=2)
-    y += 10
-    date_line = "SUNDAY  \u00b7  22 NOVEMBER 2026"
-    df = font(SANS_B, 30)
-    dw = draw.textlength(date_line, font=df)
-    draw.text(((W - dw) / 2, y), date_line, font=df, fill=RED)
-    y += 40
-    draw.line([(mx, y), (W - mx, y)], fill=INK, width=3)
-    y += 12
+    tw = draw.textlength(title, font=mast)
+    draw.text(((SIZE - tw) / 2, y), title, font=mast, fill=INK)
+    y += 78
 
-    # ---- Lead story: Iran / Bahrain ----
-    lead_top = y
-    lead_h = 216
-    draw.rectangle([mx, lead_top, W - mx, lead_top + lead_h], fill=TINT)
-    draw.rectangle([mx, lead_top, W - mx, lead_top + lead_h],
-                   outline=INK, width=2)
-    bottom = draw_story(
-        draw, mx, lead_top, cw,
-        "CONFLICT  \u00b7  THE GULF",
+    draw.line([(MARGIN, y), (SIZE - MARGIN, y)], fill=RULE, width=2)
+    y += 12
+    date_face = font(SANS_BOLD, 26)
+    dateline = "SUNDAY  ·  22 NOVEMBER 2026"
+    dw = draw.textlength(dateline, font=date_face)
+    draw.text(((SIZE - dw) / 2, y), dateline, font=date_face, fill=RED)
+    y += 40
+    draw.line([(MARGIN, y), (SIZE - MARGIN, y)], fill=RULE, width=4)
+    y += 14
+
+    content_w = SIZE - 2 * MARGIN
+
+    # ---- Lead story: the Gulf, full width ----
+    lead_h = 218
+    story_card(
+        draw, (MARGIN, y, content_w, lead_h),
+        "CONFLICT — THE GULF",
         "Iran claims strikes on US Patriot radars in Bahrain",
-        "Iran\u2019s Revolutionary Guard says a combined missile and drone "
+        "Iran's Revolutionary Guard says a combined missile and drone "
         "operation hit two US Patriot air defence radars at the al-Riffa "
         "and Awali bases. Kuwait and Bahrain say the attacks were "
         "intercepted, with no damage reported.",
-        head_size=35, body_size=21)
-    assert bottom <= lead_top + lead_h, (bottom, lead_top + lead_h)
-    y = lead_top + lead_h + 12
+        head_size=34, body_size=20, head_leading=40, body_leading=27,
+    )
+    y += lead_h + GUTTER
 
-    # ---- Grid: four stories, 2 x 2 ----
-    gap = 12
-    col_w = (cw - gap) // 2
-    row_h = 216
-    grid = [
-        ("WAR  \u00b7  LVIV, UKRAINE",
-         "Russian strike on Lviv kills two",
-         "At least two people were killed and ten injured as a Russian "
-         "missile hit a building in Lviv. Zelenskyy called strikes on "
-         "the Crimean Bridge a \u201cfair response\u201d."),
-        ("DISASTER  \u00b7  JUN\u00cdN, PERU",
-         "6.7 quake shakes Peru\u2019s Andes",
-         "The US Geological Survey put the quake at magnitude 6.7, "
-         "34 km north of Jun\u00edn. It was felt in Lima, sending "
-         "residents into the streets; no casualties were reported."),
-        ("CRIME  \u00b7  SINALOA, MEXICO",
-         "FBI most-wanted cartel boss captured",
-         "Mexican forces captured Fausto Isidro Meza Flores, \u201cEl "
-         "Chapo Isidro\u201d, in Guasave. At least 11 people were killed "
-         "in the gun battles that followed the arrest."),
-        ("TRADE  \u00b7  BRUSSELS & JAKARTA",
-         "EU and Indonesia sign landmark trade deal",
-         "After a decade of talks, the deal scraps nearly all tariffs "
-         "\u2014 98.5% of them \u2014 between the EU and Southeast Asia\u2019s "
-         "largest economy."),
-    ]
-    for row in range(2):
-        for col in range(2):
-            kicker, headline, body = grid[row * 2 + col]
-            bx = mx + col * (col_w + gap)
-            by = y + row * (row_h + gap)
-            draw.rectangle([bx, by, bx + col_w, by + row_h],
-                           outline=RULE, width=1)
-            end = draw_story(draw, bx, by, col_w, kicker, headline, body,
-                           head_size=26, body_size=18)
-            assert end <= by + row_h, (kicker, end, by + row_h)
-    y += 2 * row_h + gap + 12
+    # ---- Second row: Lviv + Junín, half width each ----
+    half_w = (content_w - GUTTER) // 2
+    row2_h = 250
+    story_card(
+        draw, (MARGIN, y, half_w, row2_h),
+        "WAR — LVIV, UKRAINE",
+        "Russian strike on Lviv kills two",
+        "At least two people were killed and ten injured as a Russian "
+        "missile hit a building in Lviv. Zelenskyy called strikes on "
+        "the Crimean Bridge a \u201cfair response\u201d.",
+        head_size=29, body_size=19, head_leading=34, body_leading=25,
+    )
+    story_card(
+        draw, (MARGIN + half_w + GUTTER, y, half_w, row2_h),
+        "DISASTER — JUN\u00cdN, PERU",
+        "6.7 quake shakes Peru's Andes",
+        "The US Geological Survey put the quake at magnitude 6.7, "
+        "34 km north of Jun\u00edn. Felt in Lima, it sent residents "
+        "into the streets; no casualties or damage were reported.",
+        head_size=29, body_size=19, head_leading=34, body_leading=25,
+    )
+    y += row2_h + GUTTER
 
-    # ---- Bottom strip: COP31 ----
-    strip_h = 134
-    draw.rectangle([mx, y, W - mx, y + strip_h], fill=TINT)
-    draw.rectangle([mx, y, W - mx, y + strip_h], outline=INK, width=2)
-    end = draw_story(
-        draw, mx, y, cw,
-        "CLIMATE  \u00b7  ANTALYA, T\u00dcRKIYE",
-        "COP31 talks deadlocked over fossil fuels",
-        "Negotiators run into overtime as nearly 200 nations split over "
-        "phasing out fossil fuels and climate finance \u2014 the latest "
-        "draft drops any mention of moving away from coal, oil and gas.",
-        head_size=28, body_size=19)
-    assert end <= y + strip_h, (end, y + strip_h)
-    y += strip_h + 10
+    # ---- Third row: three columns ----
+    third_w = (content_w - 2 * GUTTER) // 3
+    row3_h = 262
+    x3 = MARGIN
+    story_card(
+        draw, (x3, y, third_w, row3_h),
+        "CRIME — SINALOA, MEXICO",
+        "\u201cEl Chapo Isidro\u201d captured",
+        "Mexican forces captured Fausto Isidro Meza Flores, one of the "
+        "FBI's 10 most wanted, in Guasave. At least 11 people were "
+        "killed in the gun battles that followed.",
+        head_size=26, body_size=18, head_leading=31, body_leading=23,
+    )
+    x3 += third_w + GUTTER
+    story_card(
+        draw, (x3, y, third_w, row3_h),
+        "TRADE — BRUSSELS & JAKARTA",
+        "EU and Indonesia sign trade deal",
+        "After a decade of talks, the EU and Indonesia signed a deal "
+        "scrapping 98.5% of tariffs between the EU and Southeast "
+        "Asia's largest economy.",
+        head_size=26, body_size=18, head_leading=31, body_leading=23,
+    )
+    x3 += third_w + GUTTER
+    story_card(
+        draw, (x3, y, third_w, row3_h),
+        "CLIMATE — ANTALYA, T\u00dcRKIYE",
+        "COP31 deadlocked over fossil fuels",
+        "Climate talks ran into overtime, deadlocked over fossil "
+        "fuels and climate finance, as the latest draft drops any "
+        "mention of moving away from coal, oil and gas.",
+        head_size=26, body_size=18, head_leading=31, body_leading=23,
+    )
+    y += row3_h + GUTTER
 
-    # ---- Footer: sources ----
-    foot = ("Sources: ANI \u00b7 Al Jazeera \u00b7 AP / USGS \u00b7 Reuters "
-            "\u00b7 CNN \u00b7 BBC \u2014 all dated 21\u201322 November 2026")
-    ff = font(SANS, 15)
-    fw = draw.textlength(foot, font=ff)
-    draw.text(((W - fw) / 2, y), foot, font=ff, fill=MUTED)
+    # ---- Footer ----
+    draw.line([(MARGIN, y), (SIZE - MARGIN, y)], fill=RULE, width=1)
+    y += 8
+    foot = font(SANS, 15)
+    line = ("Sources: ANI · Al Jazeera · BBC · AP / USGS · Reuters · CNN · "
+            "Global Digest — all dated 21–22 November 2026")
+    fw = draw.textlength(line, font=foot)
+    draw.text(((SIZE - fw) / 2, y + 2), line, font=foot, fill=GREY)
 
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "entry.png")
     img.save(out, format="PNG", optimize=True)
-    print("wrote", out, img.size,
-          os.path.getsize(out), "bytes")
+    print(f"wrote {out} ({os.path.getsize(out)} bytes)")
 
 
 if __name__ == "__main__":
-    main()
+    build()
